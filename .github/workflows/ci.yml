@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      IVERILOG_DIR: /usr/bin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Icarus Verilog
+        run: sudo apt-get update && sudo apt-get install -y iverilog
+      - name: RV32I model vs RTL
+        run: node tools/check.mjs
+      - name: SAP-1 model vs RTL
+        run: node tools/check-sap1.mjs
+      - name: Examples up to date
+        run: node tools/gen-examples.mjs --check

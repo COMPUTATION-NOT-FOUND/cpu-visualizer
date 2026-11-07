@@ -1,0 +1,38 @@
+Negative flag added to Alu
+
+assign Negative = Result[31];
+
+-------------------------------------
+PCsrcE updated from
+
+assign PCSrc = Branch & (Zero ^ funct3[0]) | Jump;
+
+to
+PCSrcE = (branchE === 1'bx || Zero === 1'bx || funct3E === 1'bx ||jumpE === 1'bx ||  Negative === 1'bx ) 
+  ? 1'b0 
+    : (branchE & ((Zero|Negative) ^ funct3E[0])| jumpE );
+    
+------------------------------------------------------------
+
+add branch updated from
+
+adder pcaddbranch(PCPlus4E, ImmExt, temp1);
+
+to
+
+adder pcaddbranch(PCE, ImmExtE_out, temp1)
+
+so now all relative branching instructions have +4 offest
+
+
+__________________________________________________________________
+
+
+
+instruction memory updated to reflect +4 offset
+
+
+
+
+
+

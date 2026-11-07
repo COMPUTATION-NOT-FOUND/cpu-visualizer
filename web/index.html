@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CPU Visualizer</title>
+  <meta name="description" content="Write assembly and watch it run on an 8-bit SAP-1 and a 5-stage pipelined RISC-V core, clock by clock.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='6' y='6' width='20' height='20' rx='3' fill='%232563eb'/%3E%3Cpath d='M11 2v4M16 2v4M21 2v4M11 26v4M16 26v4M21 26v4M2 11h4M2 16h4M2 21h4M26 11h4M26 16h4M26 21h4' stroke='%232563eb' stroke-width='2'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <h1>CPU Visualizer</h1>
+      <p>Write assembly, then step it through the hardware one clock at a time.</p>
+    </div>
+    <nav class="cpu-tabs" role="tablist" aria-label="Processor">
+      <button role="tab" id="tab-sap1" data-cpu="sap1" aria-selected="true">SAP-1 <small>8-bit</small></button>
+      <button role="tab" id="tab-rv32i" data-cpu="rv32i" aria-selected="false">RISC-V <small>5-stage pipeline</small></button>
+    </nav>
+  </header>
+
+  <main class="layout">
+    <section class="pane editor-pane" aria-label="Program">
+      <div class="pane-head">
+        <label class="select">
+          <span class="sr-only">Example program</span>
+          <select id="examples"></select>
+        </label>
+        <button id="btn-assemble" class="primary" title="Assemble and load (Ctrl+Enter)">Assemble</button>
+        <button id="btn-share" title="Copy a link to this program">Share</button>
+      </div>
+      <div class="editor" id="editor">
+        <div class="gutter" id="gutter" aria-hidden="true"></div>
+        <div class="code">
+          <div class="backdrop" id="backdrop" aria-hidden="true"></div>
+          <textarea id="source" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Assembly source"></textarea>
+        </div>
+      </div>
+      <div class="messages" id="messages" role="status" aria-live="polite"></div>
+      <details class="reference" id="reference"></details>
+    </section>
+
+    <section class="pane machine-pane" aria-label="Machine">
+      <div class="controls" role="toolbar" aria-label="Simulation">
+        <button id="btn-reset" title="Reset (Z)">Reset</button>
+        <button id="btn-back" title="Step back (B)">◀ Back</button>
+        <button id="btn-step" title="One clock (S)">Clock</button>
+        <button id="btn-instr" title="One instruction (I)">Instruction</button>
+        <button id="btn-run" class="primary" title="Run / pause (R)">Run</button>
+        <label class="speed">Speed
+          <input id="speed" type="range" min="0" max="6" step="1" value="3" aria-describedby="speed-label">
+          <output id="speed-label">10 Hz</output>
+        </label>
+        <div class="status" id="status"></div>
+      </div>
+      <div id="machine"></div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p>
+      The RISC-V core follows the 5-stage pipeline in Harris &amp; Harris, <cite>Digital Design and Computer Architecture: RISC-V Edition</cite>.
+      The SAP-1 is Malvino's <cite>Simple-As-Possible</cite> computer, built in the Digital Logic Design course (Sir Salman Zaffar, IBA).
+      The browser runs JavaScript models that are checked against the SystemVerilog RTL every clock.
+    </p>
+  </footer>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
