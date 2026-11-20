@@ -3,6 +3,7 @@ import { Editor } from './ui/editor.js';
 import { sap1Machine } from './ui/sap1-view.js';
 import { rvMachine } from './ui/rv-view.js';
 import { EXAMPLES } from './examples.js';
+import { createGuide } from './ui/guide.js';
 
 const MACHINES = { sap1: sap1Machine, rv32i: rvMachine };
 const SPEEDS = [1, 2, 5, 10, 30, 100, Infinity];
@@ -13,7 +14,7 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 const editor = new Editor({ textarea: $('source'), gutter: $('gutter'), backdrop: $('backdrop'), scroller: $('editor') });
 const ui = {
   examples: $('examples'), messages: $('messages'), reference: $('reference'), machine: $('machine'), status: $('status'),
-  reset: $('btn-reset'), back: $('btn-back'), step: $('btn-step'), instr: $('btn-instr'), run: $('btn-run'),
+  reset: $('btn-reset'), back: $('btn-back'), fwd: $('btn-fwd'), byClock: $('by-clock'), byInstr: $('by-instr'), run: $('btn-run'),
   speed: $('speed'), speedLabel: $('speed-label'),
 };
 
@@ -22,7 +23,9 @@ const state = {
   machine: null, // adapter
   m: null,       // machine instance, null until a program assembles
   program: null,
-  history: [],   // snapshots before each step, for Back
+  history: [],   // { s: snapshot, b: was an instruction boundary } before each clock, for Back
+  atBound: true, // current state sits on an instruction boundary
+  by: 'clock',   // what Back / Forward move by: 'clock' or 'instr'
   records: [],   // one per clock, for charts
   running: false,
   modified: false,
@@ -84,19 +87,23 @@ function reset() {
   if (!state.program) return;
   state.m = state.machine.create(state.program);
   state.history = [];
+  state.atBound = true;
   state.records = [state.machine.record(state.m)];
   render();
 }
 
 function push() {
-  state.history.push(state.machine.snapshot(state.m));
+  state.history.push({ s: state.machine.snapshot(state.m), b: state.atBound });
   if (state.history.length > HISTORY) state.history.shift();
 }
 
 function clock() {
   if (!state.m || state.machine.done(state.m)) return false;
   push();
-  state.machine.step(state.m);
+  const M = state.machine, before = M.progress(state.m);
+  M.step(state.m);
+  // Same rule instrStep stops on, so instruction-sized Back lands where Forward started.
+  state.atBound = M.done(state.m) || M.boundary(state.m, before);
   state.records.push(state.machine.record(state.m));
   if (state.records.length > HISTORY + 1) state.records.shift();
   return true;
@@ -114,12 +121,43 @@ function instruction() {
   return true;
 }
 
+// Undo one clock. History is capped, so past it replay from reset (the models are deterministic).
+function unclock() {
+  const M = state.machine;
+  if (!state.history.length) {
+    const target = M.clocks(state.m);
+    if (target === 0) return false;
+    state.m = M.create(state.program);
+    state.history = [];
+    state.atBound = true;
+    state.records = [M.record(state.m)];
+    while (M.clocks(state.m) < target && clock());
+  }
+  const h = state.history.pop();
+  M.restore(state.m, h.s);
+  state.atBound = h.b;
+  if (state.records.length > 1) state.records.pop();
+  return true;
+}
+
 function back() {
   stop();
-  if (!state.history.length) return;
-  state.machine.restore(state.m, state.history.pop());
-  if (state.records.length > 1) state.records.pop();
+  if (!state.m) return;
+  if (state.by === 'instr') { while (unclock() && !state.atBound); } else unclock();
   render();
+}
+
+function forward() {
+  stop();
+  if (!state.m) { if (!assembleAndLoad()) return; }
+  if (state.by === 'instr') instruction(); else clock();
+  render();
+}
+
+function setBy(by) {
+  state.by = by;
+  try { localStorage.setItem('cpuviz.by', by); } catch {}
+  renderControls();
 }
 
 // --- Run loop ------------------------------------------------------------------------
@@ -173,13 +211,16 @@ function renderControls() {
   const has = !!state.m, done = has && state.machine.done(state.m);
   ui.run.textContent = state.running ? 'Pause' : 'Run';
   ui.run.setAttribute('aria-pressed', String(state.running));
-  ui.step.disabled = ui.instr.disabled = !has || done;
-  ui.back.disabled = !has || !state.history.length;
+  ui.fwd.disabled = !has || done;
+  ui.back.disabled = !has || state.machine.clocks(state.m) === 0;
+  const unit = state.by === 'instr' ? 'instruction' : state.machine.clock;
+  ui.back.title = `Back one ${unit} (Left arrow)`;
+  ui.fwd.title = `Forward one ${unit} (Right arrow)`;
+  ui.byClock.setAttribute('aria-checked', String(state.by === 'clock'));
+  ui.byInstr.setAttribute('aria-checked', String(state.by === 'instr'));
   ui.reset.disabled = !has;
   const s = speed();
   ui.speedLabel.textContent = s === Infinity ? 'max' : `${s} Hz`;
-  ui.step.textContent = `Clock`;
-  ui.step.title = `One ${state.machine.clock} (S)`;
 }
 
 function render() {
@@ -284,8 +325,10 @@ $('btn-assemble').addEventListener('click', assembleAndLoad);
 $('btn-share').addEventListener('click', share);
 ui.reset.addEventListener('click', reset);
 ui.back.addEventListener('click', back);
-ui.step.addEventListener('click', () => { stop(); clock(); render(); });
-ui.instr.addEventListener('click', () => { stop(); instruction(); render(); });
+ui.fwd.addEventListener('click', forward);
+ui.byClock.addEventListener('click', () => setBy('clock'));
+ui.byInstr.addEventListener('click', () => setBy('instr'));
+try { if (localStorage.getItem('cpuviz.by') === 'instr') state.by = 'instr'; } catch {}
 ui.run.addEventListener('click', () => (state.running ? stop() : run()));
 ui.speed.addEventListener('input', renderControls);
 
@@ -297,12 +340,21 @@ $('source').addEventListener('input', () => {
   if (state.m) ui.status.innerHTML = state.machine.status(state.m) + ' · <b class="stop">source modified: Assemble to reload</b>';
 });
 
+const guide = createGuide({ getCpu: () => state.cpu, open: (cpu, source) => selectCpu(cpu, source) });
+document.getElementById('guide-btn').addEventListener('click', () => guide.show());
+
 document.addEventListener('keydown', (e) => {
+  if (document.querySelector('dialog[open]')) return; // the guide handles its own keys (Esc closes it)
+  const t = e.target instanceof Element ? e.target : document.body;
+  if (e.key === '?' && !t.closest('textarea, input, select')) { e.preventDefault(); guide.show(); return; }
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); assembleAndLoad(); return; }
-  const t = e.target;
-  if (e.ctrlKey || e.metaKey || e.altKey || t.closest('textarea, input, select')) return;
+  if (e.ctrlKey || e.metaKey || e.altKey || t.closest('textarea, input, select, [role=tab]')) return;
   const k = e.key.toLowerCase();
-  const act = { s: () => ui.step.click(), i: () => ui.instr.click(), r: () => ui.run.click(), b: back, z: reset }[k];
+  const once = (f) => () => { stop(); if (state.m) { f(); render(); } };
+  const act = {
+    arrowright: forward, arrowleft: back, b: back,
+    s: once(clock), i: once(instruction), r: () => ui.run.click(), z: reset,
+  }[k];
   if (act) { e.preventDefault(); act(); }
 });
 
@@ -314,3 +366,7 @@ if (start.at && state.m) {
   while (state.machine.clocks(state.m) < start.at && clock());
   render();
 }
+
+// #guide or #guide=pseudo opens the guide (also combinable: #cpu=rv32i&guide=hazards)
+const guideAt = new URLSearchParams(location.hash.slice(1)).get('guide');
+if (guideAt != null) guide.show(guideAt || undefined);

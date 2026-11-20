@@ -50,6 +50,8 @@ export const rvMachine = {
   },
 
   done: (m) => !!m.p.halted,
+  progress: (m) => m.p.retired,
+  boundary: (m, before) => m.p.retired !== before, // an instruction just retired
   clocks: (m) => m.p.cycle,
 
   snapshot(m) {
@@ -201,7 +203,7 @@ function datapath(m, s) {
   const p = m.p;
   const W = 166, G = 24, X0 = 8, Y0 = 46, H = 128;
   const xs = STAGES.map((_, i) => X0 + i * (W + G));
-  const width = xs[4] + W + 8, height = Y0 + H + 70;
+  const width = xs[4] + W + 8, height = Y0 + H + HU_GAP + HU_H + 8;
   const o = [`<svg class="diagram" viewBox="0 0 ${width} ${height}" role="img" aria-label="Five-stage pipeline datapath">`,
     `<defs>
       <marker id="rv-ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="context-stroke"/></marker>
@@ -264,8 +266,68 @@ function datapath(m, s) {
       o.push(`<text class="sub" x="${(from + to) / 2}" y="${dip - 4}" text-anchor="middle" style="fill:var(--drive);font-weight:600">${op} ← ${f === 2 ? 'MEM' : 'WB'}</text>`);
     });
   }
+  hazardUnit(o, p, s, live, xs, W, G, Y0 + H, width);
   o.push('</svg>');
   return o.join('');
+}
+
+// The hazard unit: compares register numbers across the stages and drives the
+// forwarding muxes, the stall enables and the flush clears.
+const HU_GAP = 64, HU_H = 84;
+function hazardUnit(o, p, s, live, xs, W, G, bottom, width) {
+  const y = bottom + HU_GAP, x0 = xs[0], x1 = xs[4] + W;
+  const on = (v) => live && !!v;
+  const fA = on(s.forwardA), fB = on(s.forwardB);
+  const de = p.de, em = p.em, mw = p.mw, dec = s.dec || {};
+  const reg = (i) => xs[i] + W + 4 + (G - 8) / 2; // centre of pipeline register i
+  // [x, direction, [[label, active, colour]...]]  'out' = unit drives it, 'in' = unit reads it.
+  const wires = [
+    [xs[0] + W / 2, 'out', 'middle', [['stallF', on(s.stallF), 'var(--muted)']]],
+    [reg(0), 'out', 'end', [['stallD', on(s.stallD), 'var(--muted)'], ['flushD', on(s.flushD), 'var(--bad)']]],
+    [xs[1] + W / 2, 'in', 'middle', [['rs1D rs2D', on(s.lwstall), 'var(--bad)']]],
+    [reg(1), 'out', 'end', [['flushE', on(s.flushE), 'var(--bad)']]],
+    [xs[2] + 24, 'in', 'start', [['rs1E rs2E', fA || fB, 'var(--drive)'], ['rdE memRdE', on(s.lwstall), 'var(--bad)'], ['pcSrcE', on(s.pcSrc), 'var(--bad)']]],
+    [xs[2] + W - 34, 'out', 'middle', [['forwardAE', fA, 'var(--drive)'], ['forwardBE', fB, 'var(--drive)']]],
+    [xs[3] + W - 34, 'in', 'middle', [['rdM regWrM', on(s.forwardA === 2 || s.forwardB === 2), 'var(--drive)']]],
+    [xs[4] + W - 24, 'in', 'end', [['rdW regWrW', on(s.forwardA === 1 || s.forwardB === 1), 'var(--drive)']]],
+  ];
+  const anyOn = wires.some(([, , , ls]) => ls.some((l) => l[1]));
+  o.push(`<rect class="box" x="${x0}" y="${y}" width="${x1 - x0}" height="${HU_H}" rx="6" ${anyOn ? 'stroke-width="1.6"' : ''}/>`);
+  wires.forEach(([x, dir, anchor, labels]) => {
+    const act = labels.find((l) => l[1]);
+    const stroke = act ? act[2] : 'var(--muted)', sw = act ? 2 : 1;
+    const isReg = x === reg(0) || x === reg(1); // leave room for the hold / flush tag
+    const [a, b] = dir === 'out' ? [y, bottom + (isReg ? 20 : 2)] : [bottom, y - 2];
+    o.push(`<path d="M${x},${a} L${x},${b}" fill="none" stroke="${stroke}" stroke-width="${sw}" ${act ? '' : 'stroke-dasharray="3 3" opacity=".45"'} marker-end="url(#rv-ah)"/>`);
+    labels.forEach(([t, a2, c], j) => {
+      const tx = anchor === 'end' ? x - 5 : anchor === 'start' ? x + 5 : x;
+      o.push(`<text class="sub" x="${tx}" y="${y + 15 + j * 13}" text-anchor="${anchor}" style="font-size:10.5px;${a2 ? `fill:${c};font-weight:700` : ''}">${t}</text>`);
+    });
+  });
+
+  // What the unit decided this cycle, in words.
+  const why = [];
+  if (live) {
+    const src = (f) => (f === 2 ? `rdM ${nm(em.rd)}` : `rdW ${nm(mw.rd)}`);
+    if (fA) why.push([`forwardAE = ${s.forwardA === 2 ? '10' : '01'}: rs1E ${nm(de.rs1)} = ${src(s.forwardA)}`, 'var(--drive)']);
+    if (fB) why.push([`forwardBE = ${s.forwardB === 2 ? '10' : '01'}: rs2E ${nm(de.rs2)} = ${src(s.forwardB)}`, 'var(--drive)']);
+    if (s.lwstall) {
+      const r = dec.rs1 === de.rd ? 'rs1D' : 'rs2D';
+      why.push([`lwStall: load in EX and ${r} = rdE ${nm(de.rd)} → stallF, stallD, flushE`, 'var(--bad)']);
+    }
+    if (s.pcSrc) why.push(['pcSrcE = 1: taken branch/jump → flushD, flushE', 'var(--bad)']);
+    else if (s.stopFetch) why.push(['halt in decode → stallF, flushD (stop fetching)', 'var(--muted)']);
+  }
+  const title = `<tspan style="font-weight:700;fill:var(--text)">Hazard unit</tspan>`;
+  if (!why.length) {
+    o.push(`<text class="sub" x="${x0 + 12}" y="${y + HU_H - 14}">${title}  ·  ${live ? 'no hazard: forwardAE = forwardBE = 00, no stall, no flush' : 'idle'}</text>`);
+  } else {
+    const rows = [why.slice(0, 2), why.slice(2)].filter((r) => r.length);
+    rows.forEach((r, i) => {
+      const parts = r.map(([t, c]) => `<tspan style="fill:${c};font-weight:600">${esc(t)}</tspan>`).join('   ·   ');
+      o.push(`<text class="sub" x="${x0 + 12}" y="${y + HU_H - 26 + i * 14}">${i === 0 ? title + '  ·  ' : ''}${parts}</text>`);
+    });
+  }
 }
 
 const trim = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);

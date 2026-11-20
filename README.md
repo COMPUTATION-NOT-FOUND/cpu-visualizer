@@ -11,7 +11,7 @@ Write assembly in the browser and step it through two processors one clock at a 
 There is no build step: `web/` is a static site made of plain ES modules.
 
 ```sh
-cd web && python -m http.server 8000    # then open http://localhost:8000
+python tools/serve.py                   # then open http://localhost:8000 (caching off)
 ```
 
 ## Using it
@@ -38,6 +38,7 @@ both and compare the results cycle by cycle. They need [Icarus Verilog](https://
 node tools/check.mjs              # RV32I: JS model vs RTL on programs/rv32i/**
 node tools/check-sap1.mjs         # SAP-1: JS model vs RTL on programs/sap1/**
 node tools/gen-examples.mjs --check   # web/js/examples.js matches programs/*/examples
+node tools/check-guide.mjs        # every program in the in-site guide gives its stated result
 node tools/old-rtl.mjs            # reproduces the original pipeline's bugs on the archived core
 ```
 

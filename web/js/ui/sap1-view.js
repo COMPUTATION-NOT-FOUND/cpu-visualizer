@@ -63,6 +63,8 @@ export const sap1Machine = {
   },
 
   done: (m) => m.sim.halted,
+  progress: (m) => m.sim.t,
+  boundary: (m) => m.sim.t === 0, // back at T1: the next instruction's fetch starts
   clocks: (m) => m.sim.steps,
 
   snapshot(m) {
